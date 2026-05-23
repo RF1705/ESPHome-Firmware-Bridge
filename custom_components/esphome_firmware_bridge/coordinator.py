@@ -1,4 +1,4 @@
-"""Data coordinator for ESPHome Docker Firmware Updates."""
+"""Data coordinator for ESPHome Firmware Bridge."""
 
 from __future__ import annotations
 

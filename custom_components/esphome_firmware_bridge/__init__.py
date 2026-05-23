@@ -1,4 +1,4 @@
-"""ESPHome Docker Firmware Updates integration."""
+"""ESPHome Firmware Bridge integration."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .coordinator import ESPHomeDockerFirmwareCoordinator
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up ESPHome Docker Firmware Updates from a config entry."""
+    """Set up ESPHome Firmware Bridge from a config entry."""
     coordinator = ESPHomeDockerFirmwareCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
 

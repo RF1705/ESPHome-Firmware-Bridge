@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "title": "ESPHome Docker Firmware-Updates",
+        "title": "ESPHome Firmware Bridge",
         "description": "Verbindet Home Assistant mit einem ESPHome Dashboard / Device Builder.",
         "data": {
           "dashboard_url": "ESPHome Dashboard URL",

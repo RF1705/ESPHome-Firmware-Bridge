@@ -1,4 +1,4 @@
-# ESPHome Docker Firmware Updates
+# ESPHome Firmware Bridge
 
 HACS custom integration for Home Assistant Core installations that run ESPHome
 Device Builder in Docker.
@@ -28,7 +28,7 @@ Copy this repository into HACS as a custom repository with category
 
 After restarting Home Assistant, add the integration from:
 
-`Settings -> Devices & services -> Add integration -> ESPHome Docker Firmware Updates`
+`Settings -> Devices & services -> Add integration -> ESPHome Firmware Bridge`
 
 ## Notes
 

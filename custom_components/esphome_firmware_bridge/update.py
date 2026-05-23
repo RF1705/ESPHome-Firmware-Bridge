@@ -1,4 +1,4 @@
-"""Update entities for ESPHome Docker Firmware Updates."""
+"""Update entities for ESPHome Firmware Bridge."""
 
 from __future__ import annotations
 

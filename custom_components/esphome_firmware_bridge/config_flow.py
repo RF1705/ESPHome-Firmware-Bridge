@@ -1,4 +1,4 @@
-"""Config flow for ESPHome Docker Firmware Updates."""
+"""Config flow for ESPHome Firmware Bridge."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from .dashboard import ESPHomeDashboardClient, ESPHomeDashboardError
 
 
 class ESPHomeDockerFirmwareConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for ESPHome Docker Firmware Updates."""
+    """Handle a config flow for ESPHome Firmware Bridge."""
 
     VERSION = 1
 
