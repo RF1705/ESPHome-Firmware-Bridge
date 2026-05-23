@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "ESPHome Docker Firmware Updates",
+        "description": "Connect Home Assistant to an ESPHome Dashboard / Device Builder instance.",
+        "data": {
+          "dashboard_url": "ESPHome Dashboard URL",
+          "username": "Username",
+          "password": "Password",
+          "verify_ssl": "Verify SSL certificate",
+          "node_filter": "Node filter"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to ESPHome Dashboard."
+    },
+    "abort": {
+      "already_configured": "This ESPHome Dashboard is already configured."
+    }
+  },
+  "entity": {
+    "update": {
+      "firmware": {
+        "name": "Firmware"
+      }
+    }
+  }
+}
