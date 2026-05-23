@@ -30,6 +30,12 @@ After restarting Home Assistant, add the integration from:
 
 `Settings -> Devices & services -> Add integration -> ESPHome Firmware Bridge`
 
+## Support
+
+If this integration helps you, you can support the project here:
+
+[Buy me a coffee](https://buymeacoffee.com/rf1705)
+
 ## Notes
 
 ESPHome Dashboard endpoints have changed over time and are less formally
