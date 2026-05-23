@@ -1,5 +1,8 @@
 # ESPHome Firmware Bridge
 
+[![Validate](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml)
+[![Hassfest](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml)
+
 HACS custom integration for Home Assistant Core installations that run ESPHome
 Device Builder in Docker.
 
@@ -23,12 +26,30 @@ ota:
 
 ## Installation
 
-Copy this repository into HACS as a custom repository with category
-`Integration`, then install it from HACS.
+In HACS, open the three-dot menu, choose `Custom repositories`, and add:
+
+```text
+https://github.com/RF1705/ESPHome-Firmware-Bridge
+```
+
+Use category `Integration`, then install `ESPHome Firmware Bridge` from HACS.
 
 After restarting Home Assistant, add the integration from:
 
 `Settings -> Devices & services -> Add integration -> ESPHome Firmware Bridge`
+
+## Configuration
+
+During setup, provide the URL of your ESPHome Dashboard / Device Builder, for
+example:
+
+```text
+http://homeassistant.local:6052
+```
+
+If the dashboard is protected by a reverse proxy, enter the configured username
+and password. The optional node filter accepts comma-separated ESPHome node
+names if only selected devices should be exposed as update entities.
 
 ## Support
 
@@ -44,3 +65,7 @@ Dashboard access isolated in one client and tries multiple endpoint shapes.
 
 If your ESPHome Dashboard is protected by a reverse proxy, configure the
 username and password in the integration setup.
+
+## License
+
+MIT
