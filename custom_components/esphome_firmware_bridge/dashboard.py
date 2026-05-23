@@ -62,7 +62,7 @@ class ESPHomeDashboardClient:
     async def async_get_dashboard_version(self) -> str | None:
         """Return the ESPHome Dashboard version if the endpoint exposes it."""
         try:
-            data = await self._request_json("GET", ("/info", "/api/info"))
+            data = await self._request_json("GET", ("/version", "/info", "/api/info"))
         except ESPHomeDashboardError:
             return None
 
