@@ -83,15 +83,15 @@ class ESPHomeDashboardClient:
         """Ask ESPHome Dashboard to build and OTA install a node."""
         configuration = node.filename or f"{node.name}.yaml"
         payload = {"configuration": configuration, "port": "OTA"}
-        run_error = "not attempted"
+        upload_error = "not attempted"
 
         try:
-            await self._run_dashboard_command("run", payload)
+            await self._run_dashboard_command("upload", payload)
             return
         except ESPHomeDashboardError as err:
-            run_error = str(err)
+            upload_error = str(err)
             _LOGGER.debug(
-                "ESPHome Dashboard run WebSocket failed: %s",
+                "ESPHome Dashboard upload WebSocket failed: %s",
                 err,
             )
 
@@ -111,7 +111,7 @@ class ESPHomeDashboardClient:
         except ESPHomeDashboardError as legacy_err:
             raise ESPHomeDashboardError(
                 "ESPHome Dashboard firmware install failed. "
-                f"run WebSocket error: {run_error}; "
+                f"upload WebSocket error: {upload_error}; "
                 f"legacy REST fallback error: {legacy_err}"
             ) from legacy_err
 
