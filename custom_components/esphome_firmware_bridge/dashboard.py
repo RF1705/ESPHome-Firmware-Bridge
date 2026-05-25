@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import itertools
 import logging
 from typing import Any
 
@@ -11,7 +10,6 @@ from aiohttp import BasicAuth, ClientError, ClientSession, WSMsgType
 from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
-_MESSAGE_IDS = itertools.count(1)
 
 
 class ESPHomeDashboardError(Exception):
@@ -51,12 +49,7 @@ class ESPHomeDashboardClient:
 
     async def async_get_nodes(self) -> list[DashboardNode]:
         """Return nodes known to ESPHome Dashboard."""
-        try:
-            data = await self._send_ws_command("devices/list")
-        except ESPHomeDashboardError as err:
-            _LOGGER.debug("ESPHome Dashboard WebSocket devices/list failed: %s", err)
-            data = await self._request_json("GET", ("/devices", "/api/devices"))
-
+        data = await self._request_json("GET", ("/devices", "/api/devices"))
         raw_nodes = self._extract_nodes(data)
         dashboard_version = await self.async_get_dashboard_version()
 
@@ -71,14 +64,9 @@ class ESPHomeDashboardClient:
     async def async_get_dashboard_version(self) -> str | None:
         """Return the ESPHome Dashboard version if the endpoint exposes it."""
         try:
-            data = await self._send_ws_command("config/version")
+            data = await self._request_json("GET", ("/version", "/info", "/api/info"))
         except ESPHomeDashboardError:
-            try:
-                data = await self._request_json(
-                    "GET", ("/version", "/info", "/api/info")
-                )
-            except ESPHomeDashboardError:
-                return None
+            return None
 
         if isinstance(data, str):
             return data
@@ -95,16 +83,16 @@ class ESPHomeDashboardClient:
         """Ask ESPHome Dashboard to build and OTA install a node."""
         configuration = node.filename or f"{node.name}.yaml"
         payload = {"configuration": configuration, "port": "OTA"}
-        websocket_error = "not attempted"
+        run_error = "not attempted"
 
         try:
-            await self._send_ws_command("firmware/install", payload)
+            await self._run_dashboard_command("run", payload)
             return
-        except ESPHomeDashboardError as websocket_err:
-            websocket_error = str(websocket_err)
+        except ESPHomeDashboardError as err:
+            run_error = str(err)
             _LOGGER.debug(
-                "ESPHome Dashboard WebSocket firmware/install failed: %s",
-                websocket_err,
+                "ESPHome Dashboard run WebSocket failed: %s",
+                err,
             )
 
         try:
@@ -123,16 +111,16 @@ class ESPHomeDashboardClient:
         except ESPHomeDashboardError as legacy_err:
             raise ESPHomeDashboardError(
                 "ESPHome Dashboard firmware install failed. "
-                f"WebSocket API error: {websocket_error}; "
+                f"run WebSocket error: {run_error}; "
                 f"legacy REST fallback error: {legacy_err}"
             ) from legacy_err
 
-    async def _send_ws_command(
-        self, command: str, args: dict[str, Any] | None = None
-    ) -> Any:
-        """Send a Device Builder WebSocket command and return its result."""
-        url = self._ws_url()
-        message_id = str(next(_MESSAGE_IDS))
+    async def _run_dashboard_command(
+        self, endpoint: str, payload: dict[str, Any]
+    ) -> None:
+        """Run a Dashboard command WebSocket and wait for its exit code."""
+        url = self._ws_url(endpoint)
+        install_log: list[str] = []
 
         try:
             async with self._session.ws_connect(
@@ -141,58 +129,41 @@ class ESPHomeDashboardClient:
                 ssl=self._verify_ssl,
                 heartbeat=30,
             ) as websocket:
-                server_message = await websocket.receive_json()
-                if server_message.get("requires_auth"):
-                    if not self._username:
-                        raise ESPHomeDashboardError(
-                            "ESPHome Dashboard requires authentication"
-                        )
-                    await websocket.send_json(
-                        {
-                            "command": "auth/login",
-                            "message_id": f"{message_id}-auth",
-                            "args": {
-                                "username": self._username,
-                                "password": self._password,
-                            },
-                        }
-                    )
-                    await self._receive_ws_result(websocket, f"{message_id}-auth")
-
-                await websocket.send_json(
-                    {
-                        "command": command,
-                        "message_id": message_id,
-                        "args": args or {},
-                    }
-                )
-                return await self._receive_ws_result(websocket, message_id)
+                await websocket.send_json({"type": "spawn", **payload})
+                await self._wait_for_dashboard_command(websocket, install_log)
         except (ClientError, TimeoutError, ValueError) as err:
             raise ESPHomeDashboardError(
                 f"ESPHome Dashboard WebSocket request failed: {err}"
             ) from err
 
     @staticmethod
-    async def _receive_ws_result(websocket, message_id: str) -> Any:
-        """Receive a WebSocket result message for a command."""
+    async def _wait_for_dashboard_command(websocket, install_log: list[str]) -> None:
+        """Wait until a Dashboard command WebSocket exits."""
         while True:
             message = await websocket.receive()
             if message.type == WSMsgType.TEXT:
                 data = message.json()
-                if data.get("message_id") != message_id:
+                event = data.get("event")
+                if event == "line":
+                    line = data.get("data")
+                    if isinstance(line, str):
+                        install_log.append(line.strip())
                     continue
-                if "error_code" in data:
+                if event == "exit":
+                    if data.get("code") == 0:
+                        return
+                    tail = "\n".join(line for line in install_log[-8:] if line)
                     raise ESPHomeDashboardError(
-                        f"{data['error_code']}: {data.get('details', '')}"
+                        f"ESPHome command exited with code {data.get('code')}: {tail}"
                     )
-                return data.get("result")
+                continue
             if message.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
                 raise ESPHomeDashboardError("ESPHome Dashboard WebSocket closed")
 
-    def _ws_url(self) -> URL:
-        """Return the Device Builder WebSocket URL."""
+    def _ws_url(self, endpoint: str) -> URL:
+        """Return a Dashboard command WebSocket URL."""
         scheme = "wss" if self._base_url.scheme == "https" else "ws"
-        return URL(f"{self._base_url.with_scheme(scheme)}/ws")
+        return URL(f"{self._base_url.with_scheme(scheme)}/{endpoint.lstrip('/')}")
 
     async def _request_json(
         self,
