@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import itertools
 import logging
 from typing import Any
 
-from aiohttp import BasicAuth, ClientError, ClientSession
+from aiohttp import BasicAuth, ClientError, ClientSession, WSMsgType
 from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
+_MESSAGE_IDS = itertools.count(1)
 
 
 class ESPHomeDashboardError(Exception):
@@ -42,12 +44,19 @@ class ESPHomeDashboardClient:
         """Initialize the client."""
         self._session = session
         self._base_url = URL(str(dashboard_url).rstrip("/"))
+        self._username = username
+        self._password = password or ""
         self._auth = BasicAuth(username, password or "") if username else None
         self._verify_ssl = verify_ssl
 
     async def async_get_nodes(self) -> list[DashboardNode]:
         """Return nodes known to ESPHome Dashboard."""
-        data = await self._request_json("GET", ("/devices", "/api/devices"))
+        try:
+            data = await self._send_ws_command("devices/list")
+        except ESPHomeDashboardError as err:
+            _LOGGER.debug("ESPHome Dashboard WebSocket devices/list failed: %s", err)
+            data = await self._request_json("GET", ("/devices", "/api/devices"))
+
         raw_nodes = self._extract_nodes(data)
         dashboard_version = await self.async_get_dashboard_version()
 
@@ -62,14 +71,21 @@ class ESPHomeDashboardClient:
     async def async_get_dashboard_version(self) -> str | None:
         """Return the ESPHome Dashboard version if the endpoint exposes it."""
         try:
-            data = await self._request_json("GET", ("/version", "/info", "/api/info"))
+            data = await self._send_ws_command("config/version")
         except ESPHomeDashboardError:
-            return None
+            try:
+                data = await self._request_json(
+                    "GET", ("/version", "/info", "/api/info")
+                )
+            except ESPHomeDashboardError:
+                return None
 
+        if isinstance(data, str):
+            return data
         if not isinstance(data, dict):
             return None
 
-        for key in ("version", "esphome_version", "dashboard_version"):
+        for key in ("esphome_version", "version", "dashboard_version"):
             value = data.get(key)
             if isinstance(value, str) and value:
                 return value
@@ -79,6 +95,12 @@ class ESPHomeDashboardClient:
         """Ask ESPHome Dashboard to build and OTA install a node."""
         configuration = node.filename or f"{node.name}.yaml"
         payload = {"configuration": configuration, "port": "OTA"}
+
+        try:
+            await self._send_ws_command("firmware/install", payload)
+            return
+        except ESPHomeDashboardError:
+            _LOGGER.debug("ESPHome Dashboard WebSocket firmware/install failed")
 
         await self._request_json(
             "POST",
@@ -92,6 +114,72 @@ class ESPHomeDashboardClient:
             ),
             json=payload,
         )
+
+    async def _send_ws_command(
+        self, command: str, args: dict[str, Any] | None = None
+    ) -> Any:
+        """Send a Device Builder WebSocket command and return its result."""
+        url = self._ws_url()
+        message_id = str(next(_MESSAGE_IDS))
+
+        try:
+            async with self._session.ws_connect(
+                url,
+                ssl=self._verify_ssl,
+                heartbeat=30,
+            ) as websocket:
+                server_message = await websocket.receive_json()
+                if server_message.get("requires_auth"):
+                    if not self._username:
+                        raise ESPHomeDashboardError(
+                            "ESPHome Dashboard requires authentication"
+                        )
+                    await websocket.send_json(
+                        {
+                            "command": "auth/login",
+                            "message_id": f"{message_id}-auth",
+                            "args": {
+                                "username": self._username,
+                                "password": self._password,
+                            },
+                        }
+                    )
+                    await self._receive_ws_result(websocket, f"{message_id}-auth")
+
+                await websocket.send_json(
+                    {
+                        "command": command,
+                        "message_id": message_id,
+                        "args": args or {},
+                    }
+                )
+                return await self._receive_ws_result(websocket, message_id)
+        except (ClientError, TimeoutError, ValueError) as err:
+            raise ESPHomeDashboardError(
+                f"ESPHome Dashboard WebSocket request failed: {err}"
+            ) from err
+
+    @staticmethod
+    async def _receive_ws_result(websocket, message_id: str) -> Any:
+        """Receive a WebSocket result message for a command."""
+        while True:
+            message = await websocket.receive()
+            if message.type == WSMsgType.TEXT:
+                data = message.json()
+                if data.get("message_id") != message_id:
+                    continue
+                if "error_code" in data:
+                    raise ESPHomeDashboardError(
+                        f"{data['error_code']}: {data.get('details', '')}"
+                    )
+                return data.get("result")
+            if message.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                raise ESPHomeDashboardError("ESPHome Dashboard WebSocket closed")
+
+    def _ws_url(self) -> URL:
+        """Return the Device Builder WebSocket URL."""
+        scheme = "wss" if self._base_url.scheme == "https" else "ws"
+        return URL(f"{self._base_url.with_scheme(scheme)}/ws")
 
     async def _request_json(
         self,
@@ -148,6 +236,9 @@ class ESPHomeDashboardClient:
             value = data.get(key)
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
+        configured = data.get("configured")
+        if isinstance(configured, dict):
+            return [item for item in configured.values() if isinstance(item, dict)]
 
         return []
 
@@ -178,6 +269,7 @@ class ESPHomeDashboardClient:
                 "current_version",
                 "firmware_version",
                 "esphome_version",
+                "loaded_integrations_version",
             ),
             latest_version=_first_str(raw, "latest_version", "target_version")
             or dashboard_version,
