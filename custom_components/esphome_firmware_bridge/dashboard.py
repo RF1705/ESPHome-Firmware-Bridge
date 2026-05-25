@@ -99,21 +99,31 @@ class ESPHomeDashboardClient:
         try:
             await self._send_ws_command("firmware/install", payload)
             return
-        except ESPHomeDashboardError:
-            _LOGGER.debug("ESPHome Dashboard WebSocket firmware/install failed")
+        except ESPHomeDashboardError as websocket_err:
+            _LOGGER.debug(
+                "ESPHome Dashboard WebSocket firmware/install failed: %s",
+                websocket_err,
+            )
 
-        await self._request_json(
-            "POST",
-            (
-                f"/devices/{configuration}/install",
-                f"/api/devices/{configuration}/install",
-                "/install",
-                "/api/install",
-                "/run",
-                "/api/run",
-            ),
-            json=payload,
-        )
+        try:
+            await self._request_json(
+                "POST",
+                (
+                    f"/devices/{configuration}/install",
+                    f"/api/devices/{configuration}/install",
+                    "/install",
+                    "/api/install",
+                    "/run",
+                    "/api/run",
+                ),
+                json=payload,
+            )
+        except ESPHomeDashboardError as legacy_err:
+            raise ESPHomeDashboardError(
+                "ESPHome Dashboard firmware install failed. "
+                f"WebSocket API error: {websocket_err}; "
+                f"legacy REST fallback error: {legacy_err}"
+            ) from legacy_err
 
     async def _send_ws_command(
         self, command: str, args: dict[str, Any] | None = None
@@ -125,6 +135,7 @@ class ESPHomeDashboardClient:
         try:
             async with self._session.ws_connect(
                 url,
+                auth=self._auth,
                 ssl=self._verify_ssl,
                 heartbeat=30,
             ) as websocket:
