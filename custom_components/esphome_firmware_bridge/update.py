@@ -7,6 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -60,6 +61,25 @@ class ESPHomeFirmwareUpdateEntity(
         self._attr_has_entity_name = True
         self._attr_name = f"{node.name} Firmware"
 
+    async def async_added_to_hass(self) -> None:
+        """Assign the update entity to the matching ESPHome device."""
+        await super().async_added_to_hass()
+        self._async_attach_to_esphome_device()
+
+    def _async_attach_to_esphome_device(self) -> None:
+        """Attach this entity to an existing ESPHome device entry."""
+        if (node := self.node) is None:
+            return
+        if (device := _find_esphome_device(self.coordinator.hass, node.name)) is None:
+            return
+
+        registry = er.async_get(self.coordinator.hass)
+        entity_entry = registry.async_get(self.entity_id)
+        if entity_entry is None or entity_entry.device_id == device.id:
+            return
+
+        registry.async_update_entity(self.entity_id, device_id=device.id)
+
     @property
     def node(self) -> DashboardNode | None:
         """Return the current node data."""
@@ -100,7 +120,7 @@ class ESPHomeFirmwareUpdateEntity(
         if (node := self.node) is None:
             return None
 
-        device_info = {
+        return {
             "identifiers": {(DOMAIN, node.name)},
             "name": node.name,
             "manufacturer": "ESPHome",
@@ -109,20 +129,6 @@ class ESPHomeFirmwareUpdateEntity(
                 "dashboard_url"
             ),
         }
-
-        esphome_device = _find_esphome_device(self.coordinator.hass, node.name)
-        if esphome_device is not None:
-            device_info["name"] = (
-                esphome_device.name_by_user or esphome_device.name or node.name
-            )
-            if esphome_device.connections:
-                device_info["connections"] = set(esphome_device.connections)
-            device_info["identifiers"] = {
-                *esphome_device.identifiers,
-                (DOMAIN, node.name),
-            }
-
-        return device_info
 
     async def async_install(
         self,
