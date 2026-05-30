@@ -150,13 +150,21 @@ def _find_esphome_device(hass: HomeAssistant, node_name: str):
     """Find the Home Assistant device registry entry for an ESPHome node."""
     registry = dr.async_get(hass)
     normalized_node = _normalize_name(node_name)
+    esphome_entry_ids = {
+        entry.entry_id for entry in hass.config_entries.async_entries("esphome")
+    }
 
     for device in registry.devices.values():
-        if not any(identifier[0] == "esphome" for identifier in device.identifiers):
+        has_esphome_identifier = any(
+            identifier[0] == "esphome" for identifier in device.identifiers
+        )
+        has_esphome_entry = bool(device.config_entries & esphome_entry_ids)
+        if not has_esphome_identifier and not has_esphome_entry:
             continue
 
         candidates = {
             *(str(identifier[1]) for identifier in device.identifiers),
+            *(str(connection[1]) for connection in device.connections),
             device.name or "",
             device.name_by_user or "",
         }
