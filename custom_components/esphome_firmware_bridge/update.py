@@ -100,7 +100,7 @@ class ESPHomeFirmwareUpdateEntity(
         if (node := self.node) is None:
             return None
 
-        return {
+        device_info = {
             "identifiers": {(DOMAIN, node.name)},
             "name": node.name,
             "manufacturer": "ESPHome",
@@ -109,6 +109,20 @@ class ESPHomeFirmwareUpdateEntity(
                 "dashboard_url"
             ),
         }
+
+        esphome_device = _find_esphome_device(self.coordinator.hass, node.name)
+        if esphome_device is not None:
+            device_info["name"] = (
+                esphome_device.name_by_user or esphome_device.name or node.name
+            )
+            if esphome_device.connections:
+                device_info["connections"] = set(esphome_device.connections)
+            device_info["identifiers"] = {
+                *esphome_device.identifiers,
+                (DOMAIN, node.name),
+            }
+
+        return device_info
 
     async def async_install(
         self,
@@ -126,6 +140,14 @@ class ESPHomeFirmwareUpdateEntity(
 
 def _find_esphome_device_version(hass: HomeAssistant, node_name: str) -> str | None:
     """Find the firmware version Home Assistant knows for an ESPHome node."""
+    if (device := _find_esphome_device(hass, node_name)) is None:
+        return None
+
+    return getattr(device, "sw_version", None)
+
+
+def _find_esphome_device(hass: HomeAssistant, node_name: str):
+    """Find the Home Assistant device registry entry for an ESPHome node."""
     registry = dr.async_get(hass)
     normalized_node = _normalize_name(node_name)
 
@@ -141,7 +163,7 @@ def _find_esphome_device_version(hass: HomeAssistant, node_name: str) -> str | N
         if any(
             _normalize_name(candidate) == normalized_node for candidate in candidates
         ):
-            return getattr(device, "sw_version", None)
+            return device
 
     return None
 
