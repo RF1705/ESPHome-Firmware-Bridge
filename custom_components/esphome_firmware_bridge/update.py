@@ -120,6 +120,9 @@ class ESPHomeFirmwareUpdateEntity(
         if (node := self.node) is None:
             return None
 
+        if _find_esphome_device(self.coordinator.hass, node.name) is not None:
+            return None
+
         return {
             "identifiers": {(DOMAIN, node.name)},
             "name": node.name,
