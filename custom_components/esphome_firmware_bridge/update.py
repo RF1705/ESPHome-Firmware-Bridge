@@ -7,7 +7,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -61,25 +60,6 @@ class ESPHomeFirmwareUpdateEntity(
         self._attr_has_entity_name = True
         self._attr_name = f"{node.name} Firmware"
 
-    async def async_added_to_hass(self) -> None:
-        """Assign the update entity to the matching ESPHome device."""
-        await super().async_added_to_hass()
-        self._async_attach_to_esphome_device()
-
-    def _async_attach_to_esphome_device(self) -> None:
-        """Attach this entity to an existing ESPHome device entry."""
-        if (node := self.node) is None:
-            return
-        if (device := _find_esphome_device(self.coordinator.hass, node.name)) is None:
-            return
-
-        registry = er.async_get(self.coordinator.hass)
-        entity_entry = registry.async_get(self.entity_id)
-        if entity_entry is None or entity_entry.device_id == device.id:
-            return
-
-        registry.async_update_entity(self.entity_id, device_id=device.id)
-
     @property
     def node(self) -> DashboardNode | None:
         """Return the current node data."""
@@ -120,8 +100,20 @@ class ESPHomeFirmwareUpdateEntity(
         if (node := self.node) is None:
             return None
 
-        if _find_esphome_device(self.coordinator.hass, node.name) is not None:
-            return None
+        if (device := _find_esphome_device(self.coordinator.hass, node.name)) is not None:
+            device_info = {
+                "name": device.name_by_user or device.name or node.name,
+                "manufacturer": "ESPHome",
+                "sw_version": self.installed_version,
+                "configuration_url": self.coordinator.config_entry.data.get(
+                    "dashboard_url"
+                ),
+            }
+            if device.identifiers:
+                device_info["identifiers"] = set(device.identifiers)
+            if device.connections:
+                device_info["connections"] = set(device.connections)
+            return device_info
 
         return {
             "identifiers": {(DOMAIN, node.name)},
