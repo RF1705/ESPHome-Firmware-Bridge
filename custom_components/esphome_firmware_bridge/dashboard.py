@@ -82,38 +82,14 @@ class ESPHomeDashboardClient:
     async def async_install(self, node: DashboardNode) -> None:
         """Ask ESPHome Dashboard to build and OTA install a node."""
         configuration = node.filename or f"{node.name}.yaml"
-        payload = {"configuration": configuration, "port": "OTA"}
-        upload_error = "not attempted"
-
-        try:
-            await self._run_dashboard_command("upload", payload)
-            return
-        except ESPHomeDashboardError as err:
-            upload_error = str(err)
-            _LOGGER.debug(
-                "ESPHome Dashboard upload WebSocket failed: %s",
-                err,
-            )
-
-        try:
-            await self._request_json(
-                "POST",
-                (
-                    f"/devices/{configuration}/install",
-                    f"/api/devices/{configuration}/install",
-                    "/install",
-                    "/api/install",
-                    "/run",
-                    "/api/run",
-                ),
-                json=payload,
-            )
-        except ESPHomeDashboardError as legacy_err:
-            raise ESPHomeDashboardError(
-                "ESPHome Dashboard firmware install failed. "
-                f"upload WebSocket error: {upload_error}; "
-                f"legacy REST fallback error: {legacy_err}"
-            ) from legacy_err
+        await self._run_dashboard_command(
+            "compile",
+            {"configuration": configuration},
+        )
+        await self._run_dashboard_command(
+            "upload",
+            {"configuration": configuration, "port": "OTA"},
+        )
 
     async def _run_dashboard_command(
         self, endpoint: str, payload: dict[str, Any]
