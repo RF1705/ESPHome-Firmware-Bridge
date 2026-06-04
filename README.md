@@ -2,7 +2,6 @@
 
 [![Validate](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml)
 [![Hassfest](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml)
-[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=RF1705&repository=ESPHome-Firmware-Bridge&category=integration)
 
 HACS custom integration for Home Assistant Core installations that run ESPHome
 Device Builder in Docker.
@@ -26,6 +25,12 @@ ota:
 ```
 
 ## Installation
+
+### Add through HACS
+
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=RF1705&repository=ESPHome-Firmware-Bridge&category=integration)
+
+### Add manually
 
 In HACS, open the three-dot menu, choose `Custom repositories`, and add:
 
