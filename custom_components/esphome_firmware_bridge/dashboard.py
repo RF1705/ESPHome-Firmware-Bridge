@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import itertools
 import logging
 from typing import Any
 
-from aiohttp import BasicAuth, ClientError, ClientSession, WSMsgType
+from aiohttp import (
+    BasicAuth,
+    ClientError,
+    ClientSession,
+    WSMsgType,
+    WSServerHandshakeError,
+)
 from yarl import URL
 
 _LOGGER = logging.getLogger(__name__)
+_MESSAGE_IDS = itertools.count(1)
+_TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+
+
+class DeviceBuilderUnavailable(Exception):
+    """Raised when the multiplexed Device Builder API is unavailable."""
 
 
 class ESPHomeDashboardError(Exception):
@@ -46,13 +60,33 @@ class ESPHomeDashboardClient:
         self._password = password or ""
         self._auth = BasicAuth(username, password or "") if username else None
         self._verify_ssl = verify_ssl
+        self._backend: str | None = None
+        self._device_builder_version: str | None = None
 
     async def async_get_nodes(self) -> list[DashboardNode]:
         """Return nodes known to ESPHome Dashboard."""
-        data = await self._request_json("GET", ("/devices", "/api/devices"))
-        raw_nodes = self._extract_nodes(data)
-        dashboard_version = await self.async_get_dashboard_version()
+        if self._backend != "legacy":
+            try:
+                data, server_info = await self._device_builder_command("devices/list")
+            except DeviceBuilderUnavailable as err:
+                _LOGGER.debug("Device Builder API unavailable: %s", err)
+                self._backend = "legacy"
+            else:
+                self._backend = "device_builder"
+                self._device_builder_version = _first_str(
+                    server_info, "esphome_version", "server_version"
+                )
+                return self._normalize_nodes(data, self._device_builder_version)
 
+        data = await self._request_json("GET", ("/devices", "/api/devices"))
+        dashboard_version = await self.async_get_dashboard_version()
+        return self._normalize_nodes(data, dashboard_version)
+
+    def _normalize_nodes(
+        self, data: Any, dashboard_version: str | None
+    ) -> list[DashboardNode]:
+        """Normalize a Dashboard or Device Builder node response."""
+        raw_nodes = self._extract_nodes(data)
         nodes: list[DashboardNode] = []
         for raw in raw_nodes:
             node = self._normalize_node(raw, dashboard_version)
@@ -63,6 +97,9 @@ class ESPHomeDashboardClient:
 
     async def async_get_dashboard_version(self) -> str | None:
         """Return the ESPHome Dashboard version if the endpoint exposes it."""
+        if self._backend == "device_builder":
+            return self._device_builder_version
+
         try:
             data = await self._request_json("GET", ("/version", "/info", "/api/info"))
         except ESPHomeDashboardError:
@@ -82,6 +119,14 @@ class ESPHomeDashboardClient:
     async def async_install(self, node: DashboardNode) -> None:
         """Ask ESPHome Dashboard to build and OTA install a node."""
         configuration = node.filename or f"{node.name}.yaml"
+
+        if self._backend is None:
+            await self.async_get_nodes()
+
+        if self._backend == "device_builder":
+            await self._install_with_device_builder(configuration)
+            return
+
         await self._run_dashboard_command(
             "compile",
             {"configuration": configuration},
@@ -90,6 +135,192 @@ class ESPHomeDashboardClient:
             "upload",
             {"configuration": configuration, "port": "OTA"},
         )
+
+    async def _install_with_device_builder(self, configuration: str) -> None:
+        """Install firmware through the multiplexed Device Builder API."""
+        compile_job, _ = await self._device_builder_command(
+            "firmware/install",
+            {"configuration": configuration, "port": "OTA"},
+        )
+        if not isinstance(compile_job, dict) or not isinstance(
+            compile_job.get("job_id"), str
+        ):
+            raise ESPHomeDashboardError(
+                "Device Builder returned an invalid firmware/install response"
+            )
+
+        compile_job_id = compile_job["job_id"]
+        deadline = asyncio.get_running_loop().time() + 1800
+
+        while asyncio.get_running_loop().time() < deadline:
+            jobs, _ = await self._device_builder_command(
+                "firmware/get_jobs",
+                {"configuration": configuration},
+            )
+            if not isinstance(jobs, list):
+                raise ESPHomeDashboardError(
+                    "Device Builder returned an invalid firmware/get_jobs response"
+                )
+
+            related_jobs = [
+                job
+                for job in jobs
+                if isinstance(job, dict)
+                and (
+                    job.get("job_id") == compile_job_id
+                    or job.get("depends_on") == compile_job_id
+                )
+            ]
+            compile_state = next(
+                (
+                    job
+                    for job in related_jobs
+                    if job.get("job_id") == compile_job_id
+                ),
+                compile_job,
+            )
+            upload_state = next(
+                (
+                    job
+                    for job in related_jobs
+                    if job.get("depends_on") == compile_job_id
+                    and job.get("job_type") == "upload"
+                ),
+                None,
+            )
+
+            self._raise_for_failed_job(compile_state)
+            if upload_state is not None:
+                self._raise_for_failed_job(upload_state)
+                if (
+                    compile_state.get("status") == "completed"
+                    and upload_state.get("status") == "completed"
+                ):
+                    return
+
+            await asyncio.sleep(3)
+
+        raise ESPHomeDashboardError(
+            f"Device Builder firmware install timed out for {configuration}"
+        )
+
+    @staticmethod
+    def _raise_for_failed_job(job: dict[str, Any]) -> None:
+        """Raise a useful error for a failed or cancelled firmware job."""
+        status = job.get("status")
+        if status not in _TERMINAL_JOB_STATUSES or status == "completed":
+            return
+
+        output = job.get("output")
+        tail = ""
+        if isinstance(output, list):
+            tail = "\n".join(
+                line.strip()
+                for line in output[-8:]
+                if isinstance(line, str) and line.strip()
+            )
+        detail = job.get("error") or tail or f"exit code {job.get('exit_code')}"
+        raise ESPHomeDashboardError(
+            f"Device Builder {job.get('job_type', 'firmware')} job "
+            f"{status}: {detail}"
+        )
+
+    async def _device_builder_command(
+        self, command: str, args: dict[str, Any] | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        """Send one command through the multiplexed Device Builder WebSocket."""
+        url = self._ws_url("ws")
+        message_id = str(next(_MESSAGE_IDS))
+
+        try:
+            async with self._session.ws_connect(
+                url,
+                auth=self._auth,
+                ssl=self._verify_ssl,
+                heartbeat=30,
+            ) as websocket:
+                server_info = await self._receive_device_builder_json(websocket)
+                if not isinstance(server_info, dict) or not (
+                    "server_version" in server_info
+                    or "esphome_version" in server_info
+                ):
+                    raise DeviceBuilderUnavailable(
+                        "WebSocket did not return Device Builder server info"
+                    )
+
+                if server_info.get("requires_auth"):
+                    if not self._username:
+                        raise ESPHomeDashboardError(
+                            "Device Builder requires authentication"
+                        )
+                    await websocket.send_json(
+                        {
+                            "command": "auth/login",
+                            "message_id": f"{message_id}-auth",
+                            "args": {
+                                "username": self._username,
+                                "password": self._password,
+                            },
+                        }
+                    )
+                    await self._receive_device_builder_result(
+                        websocket, f"{message_id}-auth"
+                    )
+
+                await websocket.send_json(
+                    {
+                        "command": command,
+                        "message_id": message_id,
+                        "args": args or {},
+                    }
+                )
+                result = await self._receive_device_builder_result(
+                    websocket, message_id
+                )
+                return result, server_info
+        except WSServerHandshakeError as err:
+            if err.status in (400, 404):
+                raise DeviceBuilderUnavailable(
+                    f"Device Builder WebSocket endpoint returned {err.status}"
+                ) from err
+            raise ESPHomeDashboardError(
+                f"Device Builder WebSocket handshake failed: {err}"
+            ) from err
+        except DeviceBuilderUnavailable:
+            raise
+        except (ClientError, TimeoutError, ValueError) as err:
+            raise ESPHomeDashboardError(
+                f"Device Builder WebSocket request failed: {err}"
+            ) from err
+
+    @staticmethod
+    async def _receive_device_builder_json(websocket) -> Any:
+        """Receive one JSON message from the Device Builder WebSocket."""
+        message = await websocket.receive()
+        if message.type == WSMsgType.TEXT:
+            return message.json()
+        raise DeviceBuilderUnavailable(
+            f"Device Builder WebSocket closed with message type {message.type}"
+        )
+
+    @staticmethod
+    async def _receive_device_builder_result(websocket, message_id: str) -> Any:
+        """Wait for a Device Builder result or error message."""
+        while True:
+            message = await websocket.receive()
+            if message.type == WSMsgType.TEXT:
+                data = message.json()
+                if data.get("message_id") != message_id:
+                    continue
+                if "error_code" in data:
+                    raise ESPHomeDashboardError(
+                        f"{data['error_code']}: {data.get('details', '')}"
+                    )
+                if "result" in data:
+                    return data["result"]
+                continue
+            if message.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.ERROR):
+                raise ESPHomeDashboardError("Device Builder WebSocket closed")
 
     async def _run_dashboard_command(
         self, endpoint: str, payload: dict[str, Any]
@@ -221,7 +452,7 @@ class ESPHomeDashboardClient:
             name=name,
             filename=filename,
             address=_first_str(raw, "address", "ip", "host"),
-            online=_first_bool(raw, "online", "is_online"),
+            online=_device_online(raw),
             installed_version=_first_str(
                 raw,
                 "installed_version",
@@ -251,4 +482,16 @@ def _first_bool(data: dict[str, Any], *keys: str) -> bool | None:
         value = data.get(key)
         if isinstance(value, bool):
             return value
+    return None
+
+
+def _device_online(data: dict[str, Any]) -> bool | None:
+    """Return online state from legacy booleans or Device Builder state."""
+    if (online := _first_bool(data, "online", "is_online")) is not None:
+        return online
+    state = data.get("state")
+    if state == "online":
+        return True
+    if state == "offline":
+        return False
     return None

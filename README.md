@@ -11,6 +11,9 @@ delegates firmware builds and OTA installs to the existing ESPHome Dashboard.
 This aims to mimic the Home Assistant OS workflow where an ESPHome firmware
 update can be started from Home Assistant without opening the ESPHome UI.
 
+It supports both the current ESPHome Device Builder multiplexed WebSocket API
+and the legacy ESPHome Dashboard HTTP/command-WebSocket API.
+
 ## Requirements
 
 - Home Assistant Core 2024.8 or newer
