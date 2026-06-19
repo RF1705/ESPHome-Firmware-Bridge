@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 import itertools
 import logging
+import time
 from typing import Any
 
 from aiohttp import (
@@ -20,6 +21,7 @@ from yarl import URL
 _LOGGER = logging.getLogger(__name__)
 _MESSAGE_IDS = itertools.count(1)
 _TERMINAL_JOB_STATUSES = {"completed", "failed", "cancelled"}
+_VERSION_OVERRIDE_SECONDS = 600
 
 
 class DeviceBuilderUnavailable(Exception):
@@ -62,6 +64,7 @@ class ESPHomeDashboardClient:
         self._verify_ssl = verify_ssl
         self._backend: str | None = None
         self._device_builder_version: str | None = None
+        self._version_overrides: dict[str, tuple[str, float]] = {}
 
     async def async_get_nodes(self) -> list[DashboardNode]:
         """Return nodes known to ESPHome Dashboard."""
@@ -74,7 +77,7 @@ class ESPHomeDashboardClient:
             else:
                 self._backend = "device_builder"
                 self._device_builder_version = _first_str(
-                    server_info, "esphome_version", "server_version"
+                    server_info, "esphome_version"
                 )
                 return self._normalize_nodes(data, self._device_builder_version)
 
@@ -93,7 +96,23 @@ class ESPHomeDashboardClient:
             if node is not None:
                 nodes.append(node)
 
+        self._apply_version_overrides(nodes)
         return nodes
+
+    def _apply_version_overrides(self, nodes: list[DashboardNode]) -> None:
+        """Apply recent successful install versions while discovery catches up."""
+        now = time.monotonic()
+        for node in nodes:
+            override = self._version_overrides.get(node.filename)
+            if override is None:
+                continue
+
+            version, expires_at = override
+            if now >= expires_at or node.installed_version == version:
+                self._version_overrides.pop(node.filename, None)
+                continue
+
+            node.installed_version = version
 
     async def async_get_dashboard_version(self) -> str | None:
         """Return the ESPHome Dashboard version if the endpoint exposes it."""
@@ -125,6 +144,7 @@ class ESPHomeDashboardClient:
 
         if self._backend == "device_builder":
             await self._install_with_device_builder(configuration)
+            self._remember_installed_version(configuration, node.latest_version)
             return
 
         await self._run_dashboard_command(
@@ -134,6 +154,18 @@ class ESPHomeDashboardClient:
         await self._run_dashboard_command(
             "upload",
             {"configuration": configuration, "port": "OTA"},
+        )
+        self._remember_installed_version(configuration, node.latest_version)
+
+    def _remember_installed_version(
+        self, configuration: str, version: str | None
+    ) -> None:
+        """Remember a successful flash until the backend reports the new version."""
+        if not version:
+            return
+        self._version_overrides[configuration] = (
+            version,
+            time.monotonic() + _VERSION_OVERRIDE_SECONDS,
         )
 
     async def _install_with_device_builder(self, configuration: str) -> None:
