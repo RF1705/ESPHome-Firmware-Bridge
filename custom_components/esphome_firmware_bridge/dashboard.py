@@ -83,11 +83,6 @@ class ESPHomeDashboardClient:
                     "server_version",
                     "dashboard_version",
                 )
-                _LOGGER.debug(
-                    "ESPHome Device Builder version: %s, devices/list result: %s",
-                    self._device_builder_version,
-                    data,
-                )
                 return self._normalize_nodes(data, self._device_builder_version)
 
         data = await self._request_json("GET", ("/devices", "/api/devices"))
@@ -281,7 +276,6 @@ class ESPHomeDashboardClient:
                 heartbeat=30,
             ) as websocket:
                 server_info = await self._receive_device_builder_json(websocket)
-                _LOGGER.debug("ESPHome Device Builder server_info: %s", server_info)
                 if not isinstance(server_info, dict):
                     raise DeviceBuilderUnavailable(
                         "WebSocket did not return a JSON object as server info"
@@ -460,10 +454,8 @@ class ESPHomeDashboardClient:
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
         if not isinstance(data, dict):
-            _LOGGER.debug("devices/list result is not a list or dict: %s", type(data))
             return []
 
-        _LOGGER.debug("devices/list result keys: %s", list(data.keys()))
         for key in ("devices", "nodes", "configured", "configurations", "entries", "items"):
             value = data.get(key)
             if isinstance(value, list):
@@ -501,13 +493,6 @@ class ESPHomeDashboardClient:
             _first_str(raw, "current_version", "latest_version", "target_version",
                        "available_version")
             or dashboard_version
-        )
-        _LOGGER.debug(
-            "Node %r raw fields: %s → installed=%r latest=%r",
-            name,
-            list(raw.keys()),
-            installed,
-            latest,
         )
         return DashboardNode(
             name=name,
