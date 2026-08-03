@@ -77,7 +77,11 @@ class ESPHomeDashboardClient:
             else:
                 self._backend = "device_builder"
                 self._device_builder_version = _first_str(
-                    server_info, "esphome_version"
+                    server_info,
+                    "esphome_version",
+                    "version",
+                    "server_version",
+                    "dashboard_version",
                 )
                 return self._normalize_nodes(data, self._device_builder_version)
 
@@ -272,12 +276,9 @@ class ESPHomeDashboardClient:
                 heartbeat=30,
             ) as websocket:
                 server_info = await self._receive_device_builder_json(websocket)
-                if not isinstance(server_info, dict) or not (
-                    "server_version" in server_info
-                    or "esphome_version" in server_info
-                ):
+                if not isinstance(server_info, dict):
                     raise DeviceBuilderUnavailable(
-                        "WebSocket did not return Device Builder server info"
+                        "WebSocket did not return a JSON object as server info"
                     )
 
                 if server_info.get("requires_auth"):
@@ -447,15 +448,15 @@ class ESPHomeDashboardClient:
             f"ESPHome Dashboard request failed: {last_error}"
         ) from last_error
 
-    @staticmethod
-    def _extract_nodes(data: Any) -> list[dict[str, Any]]:
+    @classmethod
+    def _extract_nodes(cls, data: Any) -> list[dict[str, Any]]:
         """Extract node dictionaries from common Dashboard responses."""
         if isinstance(data, list):
             return [item for item in data if isinstance(item, dict)]
         if not isinstance(data, dict):
             return []
 
-        for key in ("devices", "nodes", "configured", "configurations"):
+        for key in ("devices", "nodes", "configured", "configurations", "entries", "items"):
             value = data.get(key)
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
@@ -480,22 +481,26 @@ class ESPHomeDashboardClient:
         if not name or not filename:
             return None
 
+        runtime_state = raw.get("runtime_state") or {}
+
+        # ESPHome 2026.7+: installed version is inside runtime_state.deployed_version,
+        # current_version at the top level is the dashboard build target (i.e. latest).
+        installed = (
+            _first_str(runtime_state, "deployed_version")
+            or _first_str(raw, "installed_version", "deployed_version", "firmware_version")
+        )
+        latest = (
+            _first_str(raw, "current_version", "latest_version", "target_version",
+                       "available_version")
+            or dashboard_version
+        )
         return DashboardNode(
             name=name,
             filename=filename,
             address=_first_str(raw, "address", "ip", "host"),
             online=_device_online(raw),
-            installed_version=_first_str(
-                raw,
-                "installed_version",
-                "deployed_version",
-                "current_version",
-                "firmware_version",
-                "esphome_version",
-                "loaded_integrations_version",
-            ),
-            latest_version=_first_str(raw, "latest_version", "target_version")
-            or dashboard_version,
+            installed_version=installed,
+            latest_version=latest,
         )
 
 
