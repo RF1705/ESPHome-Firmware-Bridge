@@ -2,6 +2,7 @@
 
 [![Validate](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/validate.yml)
 [![Hassfest](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml/badge.svg)](https://github.com/RF1705/ESPHome-Firmware-Bridge/actions/workflows/hassfest.yml)
+[![GitHub Downloads](https://img.shields.io/github/downloads/RF1705/ESPHome-Firmware-Bridge/total)](https://github.com/RF1705/ESPHome-Firmware-Bridge/releases)
 
 HACS custom integration for Home Assistant Core installations that run ESPHome
 Device Builder in Docker.
