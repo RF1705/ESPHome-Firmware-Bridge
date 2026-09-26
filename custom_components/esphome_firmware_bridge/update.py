@@ -155,7 +155,7 @@ def _find_esphome_device(hass: HomeAssistant, node_name: str):
         entry.entry_id for entry in hass.config_entries.async_entries("esphome")
     }
 
-    for device in registry.devices.values():
+    for device in registry.devices:
         has_esphome_identifier = any(
             identifier[0] == "esphome" for identifier in device.identifiers
         )
